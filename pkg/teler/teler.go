@@ -1,7 +1,11 @@
 package teler
 
 import (
+	"bufio"
+	"fmt"
+	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -76,6 +80,8 @@ func Analyze(options *common.Options, logs *gonx.Entry) (bool, map[string]string
 				}
 			}
 		case "CVE":
+			var method, kind string
+
 			req, err := url.ParseRequestURI(log["request_uri"])
 			if err != nil {
 				break
@@ -91,10 +97,21 @@ func Analyze(options *common.Options, logs *gonx.Entry) (bool, map[string]string
 				log["category"] = strings.ToTitle(string(cve.GetStringBytes("id")))
 
 				for _, r := range cve.GetArray("requests") {
-					method := string(r.GetStringBytes("method"))
-					if method != log["request_method"] {
-						continue
+					switch {
+					case len(r.GetArray("path")) > 0:
+						method = string(r.GetStringBytes("method"))
+						kind = "path"
+					case len(r.GetArray("raw")) > 0:
+						kind = "raw"
 					}
+
+					if kind == "path" {
+						if method != log["request_method"] {
+							continue
+						}
+					}
+					// fmt.Println(method)
+					// fmt.Fprintf(os.Stderr, "Path: %+v | RAW: %+v\n", len(r.GetArray("path")), len(r.GetArray("raw")))
 
 					for _, m := range r.GetArray("matchers") {
 						for _, s := range m.GetArray("status") {
@@ -108,15 +125,29 @@ func Analyze(options *common.Options, logs *gonx.Entry) (bool, map[string]string
 						break
 					}
 
-					for _, p := range r.GetArray("path") {
-						diff, err := url.ParseRequestURI(
-							strings.TrimPrefix(
-								strings.Trim(p.String(), `"`),
-								"{{BaseURL}}",
-							),
-						)
-						if err != nil {
-							continue
+					for _, p := range r.GetArray(kind) {
+						switch kind {
+						case "path":
+							diff, err := url.ParseRequestURI(
+								strings.TrimPrefix(
+									strings.Trim(p.String(), `"`),
+									"{{BaseURL}}",
+								),
+							)
+							if err != nil {
+								continue
+							}
+						case "raw":
+							// TODO
+							raw, err := http.ReadRequest(bufio.NewReader(strings.NewReader(p.String() + "\r\n\r\n")))
+							if err != nil {
+								continue
+							}
+
+							// diff, err :=
+							if err != nil {
+								continue
+							}
 						}
 
 						if len(diff.Path) <= 1 {
